@@ -11,7 +11,6 @@ pub struct ScalingRenderer {
     // The bind group, which describes the resources the shader can access
     bind_group: wgpu::BindGroup,
     render_pipeline: wgpu::RenderPipeline,
-    clear_color: wgpu::Color,
     // Width of screen
     width: f32,
     // Height of screen
@@ -24,10 +23,7 @@ impl ScalingRenderer {
         device: &wgpu::Device,
         texture_view: &wgpu::TextureView,
         texture_size: &wgpu::Extent3d,
-        surface_size: &SurfaceSize,
-        render_texture_format: wgpu::TextureFormat,
-        clear_color: wgpu::Color,
-        blend_state: wgpu::BlendState
+        surface_size: &SurfaceSize
     ) -> Self {
         let shader = wgpu::include_wgsl!("../shaders/scale.wgsl");
         let module = device.create_shader_module(shader);
@@ -83,7 +79,6 @@ impl ScalingRenderer {
             contents: transform_bytes,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST
         });
-
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scaling_renderer_bind_group_layout"),
             entries: &[
@@ -156,8 +151,8 @@ impl ScalingRenderer {
                 module: &module,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: render_texture_format,
-                    blend: Some(blend_state),
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL
                 })]
             }),
@@ -171,7 +166,6 @@ impl ScalingRenderer {
             uniform_buffer,
             bind_group,
             render_pipeline,
-            clear_color,
             width: texture_size.width as f32,
             height: texture_size.height as f32,
             clip_rect
@@ -185,7 +179,7 @@ impl ScalingRenderer {
                 view: render_target,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(self.clear_color),
+                    load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
                     store: true
                 }
             })],
