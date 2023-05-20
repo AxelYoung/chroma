@@ -57,6 +57,12 @@ fn main() {
 
     let mut chroma = pollster::block_on(Chroma::new(SCREEN_WIDTH, SCREEN_HEIGHT, window));
 
+    let mut x = 0.0;
+    let mut y = 0.0;
+
+    chroma.add_tile(cgmath::Vector2 { x: 16.0, y: 16.0 }, 3);
+    chroma.add_tile(cgmath::Vector2 { x: 64.0, y: 17.5 }, 0);
+
     event_loop.run(move |event, _, control_flow| {
         match event {
             Event::WindowEvent {
@@ -84,6 +90,9 @@ fn main() {
                     }
             }
             Event::RedrawRequested(window_id) if window_id == chroma.window().id() => {
+                chroma.move_tile(cgmath::Vector2 { x, y }, 1);
+                x += 0.01;
+                y += 0.01;
                 match chroma.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated

@@ -46,23 +46,27 @@ impl Vertex {
 
 const SPRITE_COUNT: u8 = 5;
 
+const SCREEN_WIDTH: u32 = 128;
+const SCREEN_HEIGHT: u32= 112;
+
 const VERTICES: &[Vertex] = &[
     Vertex {
-        position: [-1.0, 1.0, 0.0],
+        position: [0.0 / SCREEN_WIDTH as f32 - 2.0, 32.0 / SCREEN_HEIGHT as f32 - 2.0, 0.0],
         tex_coords: [0.0, 0.0],
     }, 
     Vertex {
-        position: [-1.0, -1.0, 0.0],
+        position: [0.0 / SCREEN_WIDTH as f32 - 2.0, 0.0 / SCREEN_HEIGHT as f32 - 2.0, 0.0],
         tex_coords: [0.0, 1.0],
     }, 
     Vertex {
-        position: [1.0, -1.0, 0.0],
+        position: [32.0 / SCREEN_WIDTH as f32 - 2.0, 0.0 / SCREEN_HEIGHT as f32 - 2.0, 0.0],
         tex_coords: [1.0 / SPRITE_COUNT as f32, 1.0],
     }, 
     Vertex {
-        position: [1.0, 1.0, 0.0],
+        position: [32.0 / SCREEN_WIDTH as f32 - 2.0, 32.0 / SCREEN_HEIGHT as f32 - 2.0, 0.0],
         tex_coords: [1.0 / SPRITE_COUNT as f32, 0.0],
     }, 
+    // -2,-2 to 2,2 => 0,0 to 128, 112
 ];
 
 const INDICES: &[u16] = &[0, 1, 2, 0, 2, 3];
@@ -85,8 +89,9 @@ pub struct Chroma {
     upscale_bind_group: wgpu::BindGroup,
     upscale_vertex_buffer: wgpu::Buffer,
     clip_rect: (u32, u32, u32, u32),
-    instance_count: u32,
+    instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
+    update_instance: bool
 }
 
 impl Chroma {
@@ -123,7 +128,7 @@ impl Chroma {
                 None,
         ).await.unwrap();
 
-        let (render_pipeline, vertex_buffer, index_buffer, indices_count, diffuse_bind_group, texture, texture_view, instance_buffer, instance_count) = 
+        let (render_pipeline, vertex_buffer, index_buffer, indices_count, diffuse_bind_group, texture, texture_view, instance_buffer, instances) = 
         Chroma::create_pixel_renderer(pixel_width, pixel_height, &device, &queue);
 
         let (config, upscale_pipeline, upscale_vertex_buffer, upscale_bind_group, clip_rect) = 
@@ -150,7 +155,8 @@ impl Chroma {
             upscale_vertex_buffer,
             clip_rect,
             instance_buffer,
-            instance_count
+            instances,
+            update_instance: false
         }
     }
 
@@ -166,6 +172,9 @@ impl Chroma {
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+
+        if self.update_instance { self.configure_instances(); }
+
         let mut encoder = self.device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder")
@@ -199,7 +208,7 @@ impl Chroma {
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-            render_pass.draw_indexed(0..self.indices_count, 0, 0..self.instance_count);
+            render_pass.draw_indexed(0..self.indices_count, 0, 0..self.instances.len() as u32);
         }
 
         let output = self.surface.get_current_texture()?;
@@ -234,7 +243,7 @@ impl Chroma {
     }
 
     fn create_pixel_renderer(width: u32, height: u32, device: &wgpu::Device, queue: &wgpu::Queue) ->
-    (wgpu::RenderPipeline, wgpu::Buffer, wgpu::Buffer, u32, wgpu::BindGroup, wgpu::Texture, wgpu::TextureView, wgpu::Buffer, u32) {
+    (wgpu::RenderPipeline, wgpu::Buffer, wgpu::Buffer, u32, wgpu::BindGroup, wgpu::Texture, wgpu::TextureView, wgpu::Buffer, Vec<Instance>) {
         let texture_desc = wgpu::TextureDescriptor {
             size: wgpu::Extent3d {
                 width,
@@ -300,14 +309,7 @@ impl Chroma {
         });
 
         let instances = vec![
-            Instance {
-                position: cgmath::Vector2 { x: 0.0, y: 0.0 },
-                uv_offset: cgmath::Vector2 { x: 0.4, y: 0.0 }
-            },
-            Instance {
-                position: cgmath::Vector2 { x: 1.0, y: 0.0},
-                uv_offset: cgmath::Vector2::zero()
-            }
+
         ];
 
         let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
@@ -377,7 +379,7 @@ impl Chroma {
 
         let indices_count = INDICES.len() as u32;
 
-        (render_pipeline, vertex_buffer, index_buffer, indices_count, diffuse_bind_group, texture, texture_view, instance_buffer, instances.len() as u32)
+        (render_pipeline, vertex_buffer, index_buffer, indices_count, diffuse_bind_group, texture, texture_view, instance_buffer, instances)
     }
 
     fn create_upscale_renderer(surface: &wgpu::Surface, adapter: &wgpu::Adapter, device: &wgpu::Device, window_size: winit::dpi::PhysicalSize<u32>,
@@ -539,6 +541,42 @@ impl Chroma {
 
         (config, render_pipeline, vertex_buffer, bind_group, clip_rect)
     }
+
+    pub fn configure_instances(&mut self) {
+        let instance_data = self.instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
+        self.instance_buffer = self.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("Instance Buffer"),
+                    contents: bytemuck::cast_slice(&instance_data),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }
+            );
+        self.update_instance = false;
+    }
+
+    pub fn add_tile(&mut self, position: cgmath::Vector2<f32>, index: u32) {
+        self.instances.push(
+            Instance { 
+                position: cgmath::Vector2 {
+                    x: position.x * 2.0 / SCREEN_WIDTH as f32,
+                    y: position.y * 2.0 / SCREEN_HEIGHT as f32
+                },
+                uv_offset: cgmath::Vector2 {
+                    x: index as f32 / SPRITE_COUNT as f32,
+                    y: 0.0
+                }
+            }
+        );
+        self.update_instance = true;
+    }
+
+    pub fn move_tile(&mut self, position: cgmath::Vector2<f32>, index: u32) {
+        self.instances[index as usize].position = cgmath::Vector2 {
+            x: position.x * 2.0 / SCREEN_WIDTH as f32,
+            y: position.y * 2.0 / SCREEN_HEIGHT as f32
+        };
+        self.update_instance = true;
+    }
 }
 
 pub struct ScalingMatrix {
@@ -606,7 +644,7 @@ struct Instance {
 impl Instance {
     fn to_raw(&self) -> InstanceRaw {
         InstanceRaw {
-            model: [self.position.x, self.position.y, self.uv_offset.x, self.position.y]
+            model: [self.position.x, self.position.y, self.uv_offset.x, self.uv_offset.y]
         }
     }
 }
